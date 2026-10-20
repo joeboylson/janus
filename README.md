@@ -25,7 +25,12 @@ janus save work
 janus                      # saved accounts; * marks the one in use
 janus work                 # switch every open session to work
 janus usage                # each account's 5-hour and weekly usage
+janus status               # everything on one page (-w keeps it open)
 ```
+
+`janus status` shows the account in use and why, each account's 5-hour and
+weekly usage with when it resets, how long each saved login lasts before
+you need to `/login` again, the watcher, and its recent switches.
 
 Open sessions pick up the switch on their own: Claude Code reloads its login
 when the file holding it changes.

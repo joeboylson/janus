@@ -25,7 +25,7 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 const LABEL: &str = "dev.janus.watch";
-const EVERY_SECS: u64 = 120;
+pub const EVERY_SECS: u64 = 120;
 pub const DEFAULT_PERCENT: f64 = 99.0;
 
 #[derive(Clone, Debug, Default)]
@@ -102,6 +102,12 @@ pub fn set_held(name: Option<&str>) -> Result<()> {
     Ok(())
 }
 
+/// Why the watcher moved off the primary, as it recorded then.
+pub fn away_reason() -> String {
+    let text = fs::read_to_string(away_path()).unwrap_or_default();
+    text.split_once(' ').map(|(_, why)| why.trim().to_string()).unwrap_or_default()
+}
+
 pub fn is_away() -> bool {
     away_path().exists()
 }
@@ -167,7 +173,7 @@ pub fn decide(s: &Settings, current: Option<&str>, away: bool, primary: Option<&
 }
 
 /// "1h 59m": how long until the primary frees up, from its last numbers.
-fn back_in(s: &Settings, primary: &str) -> Option<String> {
+pub fn back_in(s: &Settings, primary: &str) -> Option<String> {
     let now = Utc::now();
     match blocked(s, usage::cached(primary).as_ref(), now) {
         Some((_, Some(t))) => Some(usage::until(t, now)),
@@ -193,8 +199,18 @@ fn notify(title: &str, body: &str) {
     }
 }
 
+/// A line in the watch log, wherever the check ran from (the watcher, or
+/// `janus resume`); also shown when someone's watching in a terminal.
 fn log(line: &str) {
-    println!("{} {line}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"));
+    use std::io::Write;
+    let line = format!("{} {line}\n", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"));
+    if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(log_path()) {
+        let _ = f.write_all(line.as_bytes());
+    }
+    // SAFETY: isatty only inspects the descriptor.
+    if unsafe { libc::isatty(1) } == 1 {
+        print!("{line}");
+    }
 }
 
 /// One look at both accounts, and a switch if one is due.
@@ -259,7 +275,7 @@ pub fn cmd_watch(once: bool) -> Result<i32> {
     }
 }
 
-fn watcher_pid() -> Option<i32> {
+pub fn watcher_pid() -> Option<i32> {
     let pid: i32 = fs::read_to_string(pid_path()).ok()?.trim().parse().ok()?;
     // SAFETY: signal 0 only checks the process exists.
     (unsafe { libc::kill(pid, 0) } == 0).then_some(pid)
@@ -332,7 +348,7 @@ fn sync_watcher(s: &Settings) -> Result<()> {
 
 // ---- `janus auto ...` ----------------------------------------------------
 
-fn on_off(v: Option<f64>) -> String {
+pub fn on_off(v: Option<f64>) -> String {
     v.map(|p| format!("on, at {p:.0}%")).unwrap_or_else(|| "off".into())
 }
 
@@ -367,8 +383,7 @@ fn show() -> Result<i32> {
     if let Some(name) = held().filter(|_| s.any_on()) {
         println!("  Held on '{name}', picked by hand: nothing switches until `janus resume`.");
     } else if is_away() && s.any_on() {
-        let why = fs::read_to_string(away_path()).unwrap_or_default();
-        let why = why.split_once(' ').map(|(_, w)| w.trim()).unwrap_or("");
+        let why = away_reason();
         let primary = s.primary.as_deref().unwrap_or("");
         let back = back_in(&s, primary).map(|t| format!(" in {t}")).unwrap_or_default();
         println!("  Moved off the primary: {why}. It moves back{back}, when that resets.");

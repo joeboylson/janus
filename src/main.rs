@@ -2,6 +2,7 @@
 
 mod auto;
 mod claude;
+mod status;
 mod store;
 mod usage;
 
@@ -19,7 +20,7 @@ Every day
   janus                 list saved accounts; * marks the active one
   janus <name>          switch to <name> and stay there (also: janus use <name>)
   janus usage           each account's 5-hour and weekly usage
-  janus status          check the account on disk is the active one
+  janus status [-w]     everything on one page: usage, resets, logins (-w redraws)
 
 Switch on its own
   janus auto                     show the settings and what the watcher is doing
@@ -179,32 +180,6 @@ fn cmd_list() -> Result<i32> {
     Ok(0)
 }
 
-fn cmd_status() -> Result<i32> {
-    let active = store::current();
-    let live = claude::live()?;
-    let owner = match &live.tokens {
-        Some(t) => store::owner_of(t)?,
-        None => None,
-    };
-    println!("Active:   {}", active.as_deref().unwrap_or("none"));
-    println!(
-        "On disk:  {}  (tokens match: {})",
-        claude::email(live.account.as_ref()),
-        owner.as_deref().unwrap_or("no saved account")
-    );
-    match (&active, &owner) {
-        (Some(active), Some(owner)) if active != owner => {
-            println!("A session wrote '{owner}' back to disk. Run `janus {active}` again.");
-            Ok(1)
-        }
-        (_, None) => {
-            println!("The tokens were renewed since the last save; that's normal.");
-            Ok(0)
-        }
-        _ => Ok(0),
-    }
-}
-
 fn cmd_rm(name: &str) -> Result<i32> {
     if !store::exists(name)? {
         bail!("No saved account '{name}'.");
@@ -228,7 +203,8 @@ fn dispatch(argv: &[String]) -> Result<i32> {
         }
         ["save", name] => cmd_save(name),
         ["use", name] => cmd_use(name),
-        ["status"] => cmd_status(),
+        ["status"] => status::cmd_status(false),
+        ["status", "-w" | "--watch"] => status::cmd_status(true),
         ["usage"] => cmd_usage(),
         ["auto", rest @ ..] => auto::cmd_auto(rest),
         ["resume"] => auto::cmd_resume(),

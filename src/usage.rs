@@ -130,6 +130,16 @@ pub fn check(name: &str) -> (Option<Usage>, Option<String>) {
     (cached(name), note)
 }
 
+/// Like `check`, but reuses numbers fetched in the last `max_age_secs`.
+pub fn recent(name: &str, max_age_secs: i64) -> (Option<Usage>, Option<String>) {
+    let cached = cached(name);
+    let fresh = cached.as_ref().and_then(|u| u.fetched_at).is_some_and(|t| (Utc::now() - t).num_seconds() < max_age_secs);
+    if fresh {
+        return (cached, None);
+    }
+    check(name)
+}
+
 /// "6% (resets in 2h 10m)"
 pub fn describe(w: Option<&Window>, now: DateTime<Utc>) -> String {
     let Some(w) = w.map(|w| w.at(now)) else { return "?".into() };
