@@ -46,6 +46,9 @@ Turning either option on starts a watcher that checks both accounts every
 the primary reaches the threshold, and back as soon as the primary's limit
 resets. Turning both options off stops it.
 
+Each switch it makes shows a notification; `janus auto notify off` stops
+them and `janus auto notify test` sends one to check they show up.
+
 Picking an account by hand (`janus work`) holds it there: nothing switches
 until `janus resume`.
 

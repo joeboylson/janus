@@ -27,6 +27,7 @@ Switch on its own
   janus auto secondary <name>    and this one when the primary runs out
   janus auto weekly on|off|<%>   switch when the weekly limit hits 99% (or <%>)
   janus auto 5h on|off|<%>       the same for the 5-hour limit
+  janus auto notify on|off|test  a notification when it switches (on)
   janus resume                   after picking one by hand, let it switch again
   It moves back to the primary as soon as its limit resets. Picking an
   account by hand (janus <name>) holds it there until janus resume.

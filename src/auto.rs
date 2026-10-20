@@ -8,6 +8,7 @@
 //!     secondary    where to go when the primary runs out
 //!     weekly       switch at this % of the weekly limit, or null for off
 //!     five_hour    switch at this % of the 5-hour limit, or null for off
+//!     notify       show a notification when it switches (default true)
 //!
 //! .away records that the watcher moved off the primary, so it only moves
 //! back from a switch it made. .held names an account you picked by hand:
@@ -33,6 +34,7 @@ pub struct Settings {
     pub secondary: Option<String>,
     pub weekly: Option<f64>,
     pub five_hour: Option<f64>,
+    pub notify: bool,
 }
 
 impl Settings {
@@ -61,7 +63,13 @@ pub fn load() -> Settings {
     let saved = read_object(&settings_path()).unwrap_or_default();
     let text = |k: &str| saved.get(k).and_then(Value::as_str).map(str::to_string);
     let number = |k: &str| saved.get(k).and_then(Value::as_f64);
-    Settings { primary: text("primary"), secondary: text("secondary"), weekly: number("weekly"), five_hour: number("five_hour") }
+    Settings {
+        primary: text("primary"),
+        secondary: text("secondary"),
+        weekly: number("weekly"),
+        five_hour: number("five_hour"),
+        notify: saved.get("notify").and_then(Value::as_bool).unwrap_or(true),
+    }
 }
 
 fn save(s: &Settings) -> Result<()> {
@@ -70,6 +78,7 @@ fn save(s: &Settings) -> Result<()> {
     m.insert("secondary".into(), s.secondary.clone().into());
     m.insert("weekly".into(), s.weekly.into());
     m.insert("five_hour".into(), s.five_hour.into());
+    m.insert("notify".into(), s.notify.into());
     write_object(&settings_path(), &m, 0o600)
 }
 
@@ -168,6 +177,22 @@ fn back_in(s: &Settings, primary: &str) -> Option<String> {
 
 // ---- watching ---------------------------------------------------------------
 
+/// A desktop notification, best effort: a switch still counts if it can't show.
+fn notify(title: &str, body: &str) {
+    let title = format!("janus: {title}");
+    if cfg!(target_os = "macos") {
+        // Passed as arguments, so nothing in the text needs escaping.
+        let script = ["on run argv", "display notification (item 2 of argv) with title (item 1 of argv)", "end run"];
+        let mut cmd = Command::new("osascript");
+        for line in script {
+            cmd.args(["-e", line]);
+        }
+        let _ = cmd.args([&title, body]).stdout(Stdio::null()).stderr(Stdio::null()).status();
+    } else {
+        let _ = Command::new("notify-send").args([&title, body]).stdout(Stdio::null()).stderr(Stdio::null()).status();
+    }
+}
+
 fn log(line: &str) {
     println!("{} {line}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"));
 }
@@ -194,12 +219,20 @@ pub fn tick() -> Result<()> {
         Action::Switch(to, reason) => {
             let email = crate::switch_to(&to)?;
             set_away(reason.as_deref())?;
-            match reason {
+            let (title, body) = match reason {
                 Some(why) => {
-                    let back = back_in(&s, &p).map(|t| format!(", back in {t}")).unwrap_or_default();
-                    log(&format!("switched to '{to}' ({email}): {p} {why}{back}"));
+                    let back = back_in(&s, &p);
+                    log(&format!("switched to '{to}' ({email}): {p} {why}{}", back.as_ref().map(|t| format!(", back in {t}")).unwrap_or_default()));
+                    let back = back.map(|t| format!(" Back on {p} in {t}.")).unwrap_or_default();
+                    (format!("Switched to {to}"), format!("{p}: {why}.{back}"))
                 }
-                None => log(&format!("switched back to '{to}' ({email}): its limits have room again")),
+                None => {
+                    log(&format!("switched back to '{to}' ({email}): its limits have room again"));
+                    (format!("Back on {to}"), "Its limits have room again.".to_string())
+                }
+            };
+            if s.notify {
+                notify(&title, &body);
             }
         }
     }
@@ -324,6 +357,7 @@ fn show() -> Result<i32> {
     }
     println!("  weekly     {}", on_off(s.weekly));
     println!("  5-hour     {}", on_off(s.five_hour));
+    println!("  notify     {}", if s.notify { "on" } else { "off" });
     let watcher = match watcher_pid() {
         Some(pid) => format!("running (pid {pid}), checks every {}m", EVERY_SECS / 60),
         None if s.any_on() => "not running; see `janus logs`".into(),
@@ -406,7 +440,13 @@ pub fn cmd_auto(args: &[&str]) -> Result<i32> {
                 s.five_hour = v;
             }
         }
-        _ => bail!("Usage: janus auto [primary|secondary <name>] [weekly|5h on|off|<percent>]"),
+        ["notify", value @ ("on" | "off")] => s.notify = *value == "on",
+        ["notify", "test"] => {
+            notify("test", "Notifications from janus show up like this.");
+            println!("Sent a test notification.");
+            return Ok(0);
+        }
+        _ => bail!("Usage: janus auto [primary|secondary <name>] [weekly|5h on|off|<percent>] [notify on|off|test]"),
     }
     save(&s)?;
     sync_watcher(&s)?;
@@ -424,7 +464,7 @@ mod tests {
     }
 
     fn settings(weekly: Option<f64>, five_hour: Option<f64>) -> Settings {
-        Settings { primary: Some("p".into()), secondary: Some("s".into()), weekly, five_hour }
+        Settings { primary: Some("p".into()), secondary: Some("s".into()), weekly, five_hour, notify: false }
     }
 
     fn used(five_hour: f64, five_resets_h: i64, weekly: f64, weekly_resets_h: i64) -> Usage {
