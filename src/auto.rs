@@ -14,10 +14,13 @@
 //! back from a switch it made. .held names an account you picked by hand:
 //! while it's there the watcher switches nothing, until `janus resume`.
 
+use crate::arguments::AutoAction;
+use crate::ask::{item, Asker, Item};
 use crate::claude::{self, read_object, write_object};
 use crate::store;
 use crate::usage::{self, Usage};
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
+use console::style;
 use chrono::{DateTime, Utc};
 use serde_json::{Map, Value};
 use std::fs;
@@ -300,6 +303,12 @@ fn plist() -> String {
     let log = log_path().display().to_string();
     let home = store::home().display().to_string();
     let user_home = claude::user_home().display().to_string();
+    // The watcher must use the same Keychain item and usage address as the
+    // command that turned it on, or a test setup would act on the real ones.
+    let overrides: String = ["JANUS_KEYCHAIN_SERVICE", "JANUS_USAGE_URL"]
+        .iter()
+        .filter_map(|k| std::env::var(k).ok().map(|v| format!("<key>{k}</key><string>{}</string>", xml_escape(&v))))
+        .collect();
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -309,7 +318,7 @@ fn plist() -> String {
   <key>ProgramArguments</key>
   <array><string>{exe}</string><string>watch</string></array>
   <key>EnvironmentVariables</key>
-  <dict><key>HOME</key><string>{user_home}</string><key>JANUS_HOME</key><string>{home}</string></dict>
+  <dict><key>HOME</key><string>{user_home}</string><key>JANUS_HOME</key><string>{home}</string>{overrides}</dict>
   <key>RunAtLoad</key><true/>
   <!-- Restart after a crash, but not after it stops because both options are off. -->
   <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
@@ -320,6 +329,10 @@ fn plist() -> String {
 "#,
         exe = exe.display()
     )
+}
+
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
 
 /// Run the watcher now and at every login, or stop it, to match the settings.
@@ -352,56 +365,59 @@ fn sync_watcher(s: &Settings) -> Result<()> {
 // ---- `janus auto ...` ----------------------------------------------------
 
 pub fn on_off(v: Option<f64>) -> String {
-    v.map(|p| format!("on, at {p:.0}%")).unwrap_or_else(|| "off".into())
+    v.map(|p| format!("on, at {}%", usage::whole(p))).unwrap_or_else(|| "off".into())
 }
 
 fn show() -> Result<i32> {
     let s = load();
     let now = Utc::now();
     let current = store::current();
-    println!("Automatic switching");
+    let heading = if s.any_on() { style("on").green().bold() } else { style("off").dim() };
+    println!("{} {heading}", style("Automatic switching").bold());
     for (role, name) in [("primary", &s.primary), ("secondary", &s.secondary)] {
         match name {
             Some(n) => {
                 let u = usage::cached(n);
-                let here = if current.as_ref() == Some(n) { "  <- in use" } else { "" };
+                let here = if current.as_ref() == Some(n) { format!("  {}", style("in use").green()) } else { String::new() };
                 println!(
-                    "  {role:<10} {n}: 5-hour {}, weekly {}{here}",
+                    "  {:<10} {}: 5-hour {}, weekly {}{here}",
+                    style(role).dim(),
+                    style(n).bold(),
                     usage::describe(u.as_ref().and_then(|u| u.five_hour.as_ref()), now),
                     usage::describe(u.as_ref().and_then(|u| u.seven_day.as_ref()), now),
                 );
             }
-            None => println!("  {role:<10} not set (janus auto {role} <name>)"),
+            None => println!("  {:<10} {}", style(role).dim(), style("not set (janus auto on)").yellow()),
         }
     }
-    println!("  weekly     {}", on_off(s.weekly));
-    println!("  5-hour     {}", on_off(s.five_hour));
-    println!("  notify     {}", if s.notify { "on" } else { "off" });
+    println!("  {:<10} {}", style("weekly").dim(), on_off(s.weekly));
+    println!("  {:<10} {}", style("5-hour").dim(), on_off(s.five_hour));
+    println!("  {:<10} {}", style("notify").dim(), if s.notify { "on" } else { "off" });
     let watcher = match watcher_pid() {
-        Some(pid) => format!("running (pid {pid}), checks every {}m", EVERY_SECS / 60),
-        None if s.any_on() => "not running; see `janus logs`".into(),
-        None => "off".into(),
+        Some(pid) => style(format!("running (pid {pid}), checks every {}m", EVERY_SECS / 60)).green(),
+        None if s.any_on() => style("not running; see `janus logs`".to_string()).red(),
+        None => style("off".to_string()).dim(),
     };
-    println!("  watcher    {watcher}");
+    println!("  {:<10} {watcher}", style("watcher").dim());
     if let Some(name) = held().filter(|_| s.any_on()) {
-        println!("  Held on '{name}', picked by hand: nothing switches until `janus resume`.");
+        println!("  {}", style(format!("Held on '{name}', picked by hand: nothing switches until `janus resume`.")).yellow());
     } else if is_away() && s.any_on() {
         let why = away_reason();
         let primary = s.primary.as_deref().unwrap_or("");
         let back = back_in(&s, primary).map(|t| format!(" in {t}")).unwrap_or_default();
-        println!("  Moved off the primary: {why}. It moves back{back}, when that resets.");
+        println!("  {}", style(format!("Moved off the primary: {why}. It moves back{back}, when that resets.")).yellow());
     }
     Ok(0)
 }
 
 /// Hand the choice back to the watcher, and let it act now rather than at
 /// its next check.
-pub fn cmd_resume() -> Result<i32> {
+pub fn cmd_resume(ask: &Asker) -> Result<i32> {
     let s = load();
     let was = held();
     set_held(None)?;
     if !s.any_on() {
-        println!("Nothing was paused: automatic switching is off (janus auto weekly on, or janus auto 5h on).");
+        ask.note("Nothing was paused: automatic switching is off. `janus auto on` turns it on.");
         return Ok(0);
     }
     // On the secondary, treat it as the watcher's own move, so it goes back
@@ -412,63 +428,207 @@ pub fn cmd_resume() -> Result<i32> {
         set_away(Some(why.as_deref().unwrap_or("handed back with janus resume")))?;
     }
     match was {
-        Some(name) => println!("No longer held on '{name}'. Checking usage..."),
-        None => println!("Nothing was held. Checking usage..."),
+        Some(name) => ask.note(format!("No longer held on '{name}'. Checking usage...")),
+        None => ask.note("Nothing was held. Checking usage..."),
     }
     if let Err(e) = tick() {
-        println!("The check failed ({e:#}); the watcher tries again within {}m.", EVERY_SECS / 60);
+        ask.warning(format!("The check failed ({e:#}); the watcher tries again within {}m.", EVERY_SECS / 60));
     }
     show()
 }
 
-fn percent(v: &str) -> Result<Option<f64>> {
-    match v {
+fn percent(v: &str) -> Result<Option<f64>, String> {
+    match v.trim() {
         "on" => Ok(Some(DEFAULT_PERCENT)),
         "off" => Ok(None),
         n => match n.trim_end_matches('%').parse::<f64>() {
             Ok(p) if p > 0.0 && p <= 100.0 => Ok(Some(p)),
-            _ => bail!("Use on, off, or a percent from 1 to 100 (got `{v}`)."),
+            _ => Err(format!("Use on, off, or a percent from 1 to 100 (got `{v}`).")),
         },
     }
 }
 
-pub fn cmd_auto(args: &[&str]) -> Result<i32> {
-    let mut s = load();
-    match args {
-        [] => return show(),
-        [role @ ("primary" | "secondary"), name] => {
-            if !store::exists(name)? {
-                bail!("No saved account '{name}'.");
-            }
-            let other = if *role == "primary" { &s.secondary } else { &s.primary };
-            if other.as_deref() == Some(*name) {
-                bail!("'{name}' can't be both primary and secondary.");
-            }
-            let slot = if *role == "primary" { &mut s.primary } else { &mut s.secondary };
-            *slot = Some(name.to_string());
-        }
-        [limit @ ("weekly" | "5h" | "5-hour"), value] => {
-            let v = percent(value)?;
-            if v.is_some() && (s.primary.is_none() || s.secondary.is_none()) {
-                bail!("Set both accounts first: janus auto primary <name>, then janus auto secondary <name>.");
-            }
-            if *limit == "weekly" {
-                s.weekly = v;
-            } else {
-                s.five_hour = v;
-            }
-        }
-        ["notify", value @ ("on" | "off")] => s.notify = *value == "on",
-        ["notify", "test"] => {
-            notify("test", "Notifications from janus show up like this.");
-            println!("Sent a test notification.");
-            return Ok(0);
-        }
-        _ => bail!("Usage: janus auto [primary|secondary <name>] [weekly|5h on|off|<percent>] [notify on|off|test]"),
+/// What `janus auto on` was given; whatever's missing is asked for.
+#[derive(Default)]
+pub struct AutoInputs {
+    pub primary: Option<String>,
+    pub secondary: Option<String>,
+    pub weekly: Option<String>,
+    pub five_hour: Option<String>,
+    pub notify: Option<String>,
+}
+
+impl AutoInputs {
+    fn any(&self) -> bool {
+        self.primary.is_some() || self.secondary.is_some() || self.weekly.is_some() || self.five_hour.is_some() || self.notify.is_some()
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Limit {
+    Weekly,
+    FiveHour,
+}
+
+/// The accounts to pick from, the one in `role` now listed first.
+fn role_items(role: Option<&str>, except: Option<&str>, role_name: &str) -> Result<Vec<Item<String>>> {
+    let current = store::current();
+    let mut names: Vec<String> = store::names()?.into_iter().filter(|n| Some(n.as_str()) != except).collect();
+    names.sort_by_key(|n| Some(n.as_str()) != role);
+    names
+        .into_iter()
+        .map(|n| {
+            let mut hint = claude::email(store::load(&n)?.get("oauthAccount")).to_string();
+            if Some(n.as_str()) == role {
+                hint.push_str(&format!(", {role_name} now"));
+            } else if current.as_ref() == Some(&n) {
+                hint.push_str(", in use");
+            }
+            Ok(item(n.clone(), n, hint))
+        })
+        .collect()
+}
+
+/// Which account goes in a role: the flag, else asked, else (without a
+/// terminal) the one it has now.
+fn pick_role(ask: &Asker, given: Option<String>, now: Option<&str>, except: Option<&str>, prompt: &str, role_name: &str, flag: &str) -> Result<String> {
+    let given = given.or_else(|| (!ask.is_interactive()).then(|| now.map(str::to_string)).flatten());
+    if let Some(n) = &given {
+        if !store::exists(n)? {
+            bail!("No saved account '{n}'.");
+        }
+        if Some(n.as_str()) == except {
+            bail!("'{n}' can't be both primary and secondary.");
+        }
+    }
+    ask.pick(given, prompt, role_items(now, except, role_name)?, flag, "No other saved account. `janus account add` saves one.")
+}
+
+/// Turn automatic switching on, or change its settings: the accounts, which
+/// limits it watches and at what %, and notifications.
+pub fn configure(ask: &Asker, inputs: AutoInputs) -> Result<Settings> {
+    let mut s = load();
+    let count = store::names()?.len();
+    if count < 2 {
+        bail!("Automatic switching needs two saved accounts; you have {count}. `janus account add` saves another.");
+    }
+    let primary = pick_role(ask, inputs.primary, s.primary.as_deref(), None, "Which account should janus use whenever it has room?", "primary", "--primary")?;
+    let secondary_now = s.secondary.as_deref().filter(|n| *n != primary);
+    let secondary = pick_role(ask, inputs.secondary, secondary_now, Some(&primary), "And which one when that runs low?", "secondary", "--secondary")?;
+
+    if inputs.weekly.is_some() || inputs.five_hour.is_some() {
+        if let Some(v) = &inputs.weekly {
+            s.weekly = percent(v).map_err(|e| anyhow!(e))?;
+        }
+        if let Some(v) = &inputs.five_hour {
+            s.five_hour = percent(v).map_err(|e| anyhow!(e))?;
+        }
+    } else if ask.is_interactive() {
+        let mut ticked: Vec<Limit> = [(s.weekly, Limit::Weekly), (s.five_hour, Limit::FiveHour)].into_iter().filter(|(v, _)| v.is_some()).map(|(_, l)| l).collect();
+        if ticked.is_empty() {
+            ticked = vec![Limit::Weekly, Limit::FiveHour];
+        }
+        let limits = ask.pick_many(
+            "Switch when which limit runs low?",
+            vec![item(Limit::Weekly, "Weekly", "resets once a week"), item(Limit::FiveHour, "5-hour", "resets every 5 hours")],
+            ticked,
+        )?;
+        let at = match limits.is_empty() {
+            true => None,
+            false => {
+                let now = s.weekly.or(s.five_hour).unwrap_or(DEFAULT_PERCENT);
+                let answer = ask.text_or_default(None, "Switch at what % of the limit?", &format!("{now}"), |v| match percent(v) {
+                    Ok(Some(_)) => Ok(()),
+                    _ => Err("A percent from 1 to 100.".into()),
+                })?;
+                percent(&answer).map_err(|e| anyhow!(e))?
+            }
+        };
+        s.weekly = at.filter(|_| limits.contains(&Limit::Weekly));
+        s.five_hour = at.filter(|_| limits.contains(&Limit::FiveHour));
+    } else if !s.any_on() {
+        s.weekly = Some(DEFAULT_PERCENT);
+        s.five_hour = Some(DEFAULT_PERCENT);
+    }
+
+    s.notify = match inputs.notify.as_deref() {
+        Some("on") => true,
+        Some("off") => false,
+        Some(other) => bail!("--notify takes on or off (got `{other}`)."),
+        None => ask.yes_no("Show a notification when it switches?", s.notify)?,
+    };
+    s.primary = Some(primary);
+    s.secondary = Some(secondary);
+    save(&s)?;
+    // Turning it on is asking for it to switch, so a hold by hand ends.
+    if let Some(name) = held().filter(|_| s.any_on()) {
+        set_held(None)?;
+        ask.note(format!("No longer held on '{name}'."));
+    }
+    sync_watcher(&s)?;
+    Ok(s)
+}
+
+/// After an account is forgotten: if it had a role, automatic switching
+/// can't work, so it's turned off. True if that happened.
+pub fn forget_account(name: &str) -> Result<bool> {
+    let mut s = load();
+    let had_role = s.primary.as_deref() == Some(name) || s.secondary.as_deref() == Some(name);
+    if !had_role {
+        return Ok(false);
+    }
+    if s.primary.as_deref() == Some(name) {
+        s.primary = None;
+    }
+    if s.secondary.as_deref() == Some(name) {
+        s.secondary = None;
+    }
+    s.weekly = None;
+    s.five_hour = None;
     save(&s)?;
     sync_watcher(&s)?;
-    show()
+    Ok(true)
+}
+
+pub fn run(ask: &Asker, action: Option<AutoAction>, inputs: AutoInputs) -> Result<i32> {
+    let action = match action {
+        Some(action) => action,
+        None if inputs.any() || !load().any_on() => AutoAction::On,
+        None => ask.action(None, "janus auto")?,
+    };
+    match action {
+        AutoAction::On => {
+            ask.intro("janus auto");
+            let s = configure(ask, inputs)?;
+            match s.any_on() {
+                true => {
+                    let limits: Vec<String> = [("weekly", s.weekly), ("5-hour", s.five_hour)].iter().filter_map(|(l, v)| v.map(|p| format!("{l} at {}%", usage::whole(p)))).collect();
+                    let primary = s.primary.clone().unwrap_or_default();
+                    let secondary = s.secondary.clone().unwrap_or_default();
+                    ask.success(format!("On: uses {primary}, moves to {secondary} at {}, and back when it resets.", limits.join(" or ")));
+                    ask.outro("The watcher checks every 2 minutes and starts at login. `janus status` shows what it sees.");
+                }
+                false => ask.outro("Neither limit is ticked, so automatic switching is off."),
+            }
+            Ok(0)
+        }
+        AutoAction::Off => {
+            let mut s = load();
+            let was_on = s.any_on();
+            s.weekly = None;
+            s.five_hour = None;
+            save(&s)?;
+            sync_watcher(&s)?;
+            ask.success(if was_on { "Automatic switching is off, and the watcher has stopped." } else { "Automatic switching was off already." });
+            Ok(0)
+        }
+        AutoAction::Show => show(),
+        AutoAction::Test => {
+            notify("test", "Notifications from janus show up like this.");
+            ask.success("Sent a test notification. Nothing showed up? On a Mac, allow notifications for Script Editor in System Settings.");
+            Ok(0)
+        }
+    }
 }
 
 #[cfg(test)]

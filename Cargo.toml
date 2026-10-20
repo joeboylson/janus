@@ -1,6 +1,6 @@
 [package]
 name = "janus"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "Switch the logged-in Claude Code account without closing sessions"
 
@@ -11,6 +11,12 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# The same terminal libraries as legion: commands, prompts, color, tables, live views.
+clap = { version = "4.6.7", features = ["derive"] }
+cliclack = "0.5.6"
+comfy-table = "8.0.1"
+console = "0.16.6"
+crossterm = "0.29"
 libc = "0.2"
 # Keeps ~/.claude.json's keys in their order when it's written back.
 serde_json = { version = "1", features = ["preserve_order"] }
