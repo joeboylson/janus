@@ -20,7 +20,7 @@ case "$0" in
   *install.sh) here="$(cd "$(dirname "$0")" && pwd)" ;;
 esac
 if [ -n "$here" ] && [ -f "$here/Cargo.toml" ] && grep -q '^name = "janus"' "$here/Cargo.toml"; then
-  echo "Building janus…"
+  echo "Building janus..."
   (cd "$here" && cargo build --release --quiet)
   # A copy, not a link, so the installed one keeps working while the repo changes.
   cp "$here/target/release/janus" "$new"
@@ -37,7 +37,7 @@ else
   else
     base="https://github.com/$repo/releases/latest/download"
   fi
-  echo "Downloading janus for $target…"
+  echo "Downloading janus for $target..."
   curl -fsSL "$base/janus-$target" -o "$new"
   want="$(curl -fsSL "$base/janus-$target.sha256" | cut -d' ' -f1)"
   if command -v shasum >/dev/null; then got="$(shasum -a 256 "$new" | cut -d' ' -f1)"; else got="$(sha256sum "$new" | cut -d' ' -f1)"; fi

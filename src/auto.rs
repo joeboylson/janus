@@ -412,8 +412,8 @@ pub fn cmd_resume() -> Result<i32> {
         set_away(Some(why.as_deref().unwrap_or("handed back with janus resume")))?;
     }
     match was {
-        Some(name) => println!("No longer held on '{name}'. Checking usage…"),
-        None => println!("Nothing was held. Checking usage…"),
+        Some(name) => println!("No longer held on '{name}'. Checking usage..."),
+        None => println!("Nothing was held. Checking usage..."),
     }
     if let Err(e) = tick() {
         println!("The check failed ({e:#}); the watcher tries again within {}m.", EVERY_SECS / 60);

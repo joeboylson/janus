@@ -158,8 +158,23 @@ fn limit_line(w: Option<&Window>, switch_at: Option<f64>, now: DateTime<Utc>) ->
 }
 
 fn bar(percent: f64) -> String {
+    draw_bar(percent, utf8_terminal())
+}
+
+fn draw_bar(percent: f64, utf8: bool) -> String {
     let filled = ((percent / 10.0).round() as usize).min(10);
-    format!("{}{}", "█".repeat(filled), "░".repeat(10 - filled))
+    let (full, empty) = if utf8 { ("█", "░") } else { ("#", "-") };
+    format!("{}{}", full.repeat(filled), empty.repeat(10 - filled))
+}
+
+/// Whether the terminal says it shows UTF-8; one that doesn't (often over
+/// SSH with no locale set) turns block characters into garbage.
+fn utf8_terminal() -> bool {
+    ["LC_ALL", "LC_CTYPE", "LANG"]
+        .iter()
+        .filter_map(|k| std::env::var(k).ok().filter(|v| !v.is_empty()))
+        .next()
+        .is_some_and(|v| v.to_uppercase().replace('-', "").contains("UTF8"))
 }
 
 /// How long until this account has to log in again. The active one's copy
@@ -207,17 +222,18 @@ mod tests {
 
     #[test]
     fn bars_fill_by_tens() {
-        assert_eq!(bar(0.0), "░░░░░░░░░░");
-        assert_eq!(bar(54.0), "█████░░░░░");
-        assert_eq!(bar(99.4), "██████████");
-        assert_eq!(bar(140.0), "██████████");
+        assert_eq!(draw_bar(0.0, true), "░░░░░░░░░░");
+        assert_eq!(draw_bar(54.0, true), "█████░░░░░");
+        assert_eq!(draw_bar(99.4, true), "██████████");
+        assert_eq!(draw_bar(140.0, true), "██████████");
+        assert_eq!(draw_bar(54.0, false), "#####-----");
     }
 
     #[test]
     fn limit_lines_say_where_the_switch_point_is() {
         let now = Utc::now();
         let w = |p| Window { percent: p, resets_at: Some(now + chrono::Duration::minutes(119)) };
-        assert_eq!(limit_line(Some(&w(82.0)), Some(99.0), now), "████████░░   82%   resets in 1h 59m     (switches at 99%)");
+        assert_eq!(limit_line(Some(&w(82.0)), Some(99.0), now), format!("{}   82%   resets in 1h 59m     (switches at 99%)", bar(82.0)));
         assert!(limit_line(Some(&w(99.5)), Some(99.0), now).ends_with("(over the 99% switch point)"));
         assert_eq!(limit_line(None, None, now), "not checked yet");
     }
@@ -226,7 +242,7 @@ mod tests {
     fn a_window_past_its_reset_reads_empty() {
         let now = Utc::now();
         let w = Window { percent: 100.0, resets_at: Some(now - chrono::Duration::minutes(1)) };
-        assert!(limit_line(Some(&w), None, now).starts_with("░░░░░░░░░░    0%"));
+        assert!(limit_line(Some(&w), None, now).starts_with(&format!("{}    0%", bar(0.0))));
     }
 
     #[test]
