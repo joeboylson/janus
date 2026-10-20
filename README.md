@@ -32,8 +32,12 @@ janus status               # everything on one page (-w keeps it open)
 weekly usage with when it resets, how long each saved login lasts before
 you need to `/login` again, the watcher, and its recent switches.
 
-Open sessions pick up the switch on their own: Claude Code reloads its login
-when the file holding it changes.
+On a Mac, open sessions follow a switch within about 30 seconds: janus saves
+the login in the Keychain, which Claude Code reads again every 30 seconds.
+On Linux the login lives in a file, which open sessions only read when they
+start or when their login stops working, so a switch reaches new sessions
+right away but open ones only once they restart. `janus status` says which
+applies.
 
 ## Switch on its own
 
@@ -59,16 +63,24 @@ until `janus resume`.
 
 ## How it works
 
-Claude Code keeps its login in two files. janus saves each account's copy
+Claude Code keeps its login in two places. janus saves each account's copy
 of those two entries in `~/.janus/` and swaps them in:
 
-| File | Entry | What it is |
+| Where | Entry | What it is |
 | --- | --- | --- |
-| `~/.claude/.credentials.json` | `claudeAiOauth` | the tokens |
+| Mac: the Keychain item `Claude Code-credentials`; Linux: `~/.claude/.credentials.json` | `claudeAiOauth` | the tokens |
 | `~/.claude.json` | `oauthAccount` | which account it is |
 
-Everything else in those files, MCP logins included, is left alone and
-shared. Usage comes from the same Anthropic endpoint Claude Code's `/usage`
+On a Mac, Claude Code reads the Keychain item first and falls back to
+`~/.claude/.credentials.json` only while there's no item, for example when it
+logged in while the Keychain was locked. janus reads them in the same order
+and always saves to the Keychain. With no item yet, it makes one from the
+whole file, so MCP logins come along, and keeps the file in step. If the
+Keychain is locked, janus saves to the file and says that open sessions
+won't follow.
+
+Everything else, MCP logins included, is left alone and shared. janus works
+with the default `~/.claude` only, not a `CLAUDE_CONFIG_DIR`. Usage comes from the same Anthropic endpoint Claude Code's `/usage`
 reads. That endpoint isn't publicly documented, so it may change.
 
 Logins never leave your computer except to Anthropic, for that usage check.

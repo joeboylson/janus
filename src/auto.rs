@@ -233,7 +233,10 @@ pub fn tick() -> Result<()> {
     match decide(&s, current.as_deref(), is_away(), pu.as_ref(), su.as_ref(), Utc::now()) {
         Action::Stay => {}
         Action::Switch(to, reason) => {
-            let email = crate::switch_to(&to)?;
+            let (email, warning) = crate::switch_to(&to)?;
+            if let Some(warning) = &warning {
+                log(warning);
+            }
             set_away(reason.as_deref())?;
             let (title, body) = match reason {
                 Some(why) => {

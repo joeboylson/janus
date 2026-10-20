@@ -59,6 +59,7 @@ fn render(out: &mut impl std::io::Write) -> Result<i32> {
         None => writeln!(out, "In use   none picked yet (janus <name>)")?,
     }
     writeln!(out, "         {}", mode(&s, active.as_deref()))?;
+    writeln!(out, "         login kept in {}", live.store.describe())?;
     if let (Some(active), Some(owner)) = (&active, &owner) {
         if active != owner {
             writeln!(out, "         ! A session wrote '{owner}' back to disk. Run `janus {active}` again.")?;

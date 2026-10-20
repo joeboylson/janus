@@ -79,9 +79,9 @@ fn sync_live_into_current() -> Result<()> {
     store::save(&name, tokens, live.account.as_ref())
 }
 
-/// Put a saved account's login on disk and make it the active one; returns
-/// its email. Callers hold the lock.
-pub fn switch_to(name: &str) -> Result<String> {
+/// Put a saved account's login in place and make it the active one; returns
+/// its email, and a warning when open sessions won't follow. Callers hold the lock.
+pub fn switch_to(name: &str) -> Result<(String, Option<String>)> {
     if !store::exists(name)? {
         let have = store::names()?.join(", ");
         bail!("No saved account '{name}' (have: {}).", if have.is_empty() { "none" } else { &have });
@@ -92,18 +92,21 @@ pub fn switch_to(name: &str) -> Result<String> {
         bail!("The saved account '{name}' has no login in it. Log in and `janus save {name}` again.");
     };
     let account = target.get("oauthAccount").filter(|a| !a.is_null());
-    claude::put(tokens, account)?;
+    let warning = claude::put(tokens, account)?;
     store::set_current(name)?;
-    Ok(claude::email(account).to_string())
+    Ok((claude::email(account).to_string(), warning))
 }
 
 fn cmd_use(name: &str) -> Result<i32> {
     let _lock = store::lock()?;
-    let email = switch_to(name)?;
+    let (email, warning) = switch_to(name)?;
     // A switch by hand: hold it there until `janus resume`.
     auto::set_away(None)?;
     auto::set_held(Some(name))?;
     println!("Switched to '{name}' ({email})");
+    if let Some(warning) = warning {
+        println!("{warning}");
+    }
     if auto::load().any_on() {
         println!("Automatic switching is paused while you're on it by hand. `janus resume` hands it back.");
     }
