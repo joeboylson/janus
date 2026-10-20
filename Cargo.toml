@@ -1,0 +1,21 @@
+[package]
+name = "janus"
+version = "0.1.0"
+edition = "2021"
+description = "Switch the logged-in Claude Code account without closing sessions"
+
+[[bin]]
+name = "janus"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+libc = "0.2"
+# Keeps ~/.claude.json's keys in their order when it's written back.
+serde_json = { version = "1", features = ["preserve_order"] }
+ureq = "2"
+
+[profile.release]
+strip = true
+lto = "thin"

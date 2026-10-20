@@ -1,0 +1,7 @@
+# Rust build output
+target/
+
+# Scratch folders the smoke runs create
+sandbox/
+
+.DS_Store

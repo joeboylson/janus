@@ -1,0 +1,57 @@
+# Pushing a tag like v0.2.0 builds janus for each computer install.sh knows
+# and publishes them as that release. install.sh downloads from the latest one.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - { os: macos-latest, target: aarch64-apple-darwin }
+          - { os: macos-latest, target: x86_64-apple-darwin }
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add ${{ matrix.target }}
+      - name: Install musl
+        if: contains(matrix.target, 'musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Test
+        # Only where the build runs on the same kind of computer it's for.
+        if: matrix.target != 'x86_64-apple-darwin'
+        run: cargo test --release --target ${{ matrix.target }}
+      - name: Build
+        run: |
+          cargo build --release --target ${{ matrix.target }}
+          mkdir out
+          cp target/${{ matrix.target }}/release/janus out/janus-${{ matrix.target }}
+          cd out && shasum -a 256 janus-${{ matrix.target }} > janus-${{ matrix.target }}.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: janus-${{ matrix.target }}
+          path: out/*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" out/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes
