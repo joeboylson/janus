@@ -52,6 +52,25 @@ start or when their login stops working, so a switch reaches new sessions
 right away but open ones only once they restart. `janus status` says which
 applies.
 
+## One session on one account
+
+```sh
+janus run work             # a Claude Code session that stays on work
+janus run work --resume    # anything after the name goes to claude
+janus run --new-token work # replace its saved long-lived login
+```
+
+`janus run` starts `claude` on that account and keeps it there: switching by
+hand, `janus resume` and the watcher move every other session, never this one.
+The first time for each account, it runs `claude setup-token`, which opens
+your browser; sign in there as that account and paste the token it prints.
+janus saves it, and after that `janus run work` asks nothing. The token lasts
+a year, and janus warns you a month before it runs out.
+
+The session hands Claude Code the token through `CLAUDE_CODE_OAUTH_TOKEN`,
+which it uses over the shared login. Its usage counts against that account,
+though `/status` inside it may still name the other one.
+
 ## Switch on its own
 
 `janus setup` turns it on. Without the questions:

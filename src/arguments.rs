@@ -32,6 +32,17 @@ pub enum Top {
         /// The saved account, such as work.
         name: Option<String>,
     },
+    /// Start a Claude Code session that stays on one account, whatever the switches and the watcher do.
+    Run {
+        /// Get a new long-lived login for it first, replacing the saved one.
+        #[arg(long)]
+        new_token: bool,
+        /// The saved account, such as work.
+        name: Option<String>,
+        /// Passed on to claude, such as --resume.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        claude_args: Vec<String>,
+    },
     /// After picking an account by hand, let janus switch on its own again.
     Resume,
     /// Add, remove or list saved accounts.
@@ -80,7 +91,7 @@ pub enum Top {
 }
 
 /// Command words, which can't be account names: `janus <name>` would never reach them.
-pub const COMMAND_WORDS: [&str; 10] = ["setup", "status", "use", "resume", "account", "auto", "logs", "watch", "help", "version"];
+pub const COMMAND_WORDS: [&str; 11] = ["setup", "status", "use", "run", "resume", "account", "auto", "logs", "watch", "help", "version"];
 
 /// An action word: its name on the command line, and how the menu says it.
 pub trait Choice: ValueEnum + Clone + Eq {
@@ -129,6 +140,14 @@ mod tests {
         assert!(matches!(line.command, Some(Top::Name(words)) if words == ["work"]));
         let line = CommandLine::try_parse_from(["janus", "auto", "on", "--5h", "95"]).unwrap();
         assert!(matches!(line.command, Some(Top::Auto { action: Some(AutoAction::On), five_hour: Some(p), .. }) if p == "95"));
+    }
+
+    #[test]
+    fn run_passes_the_rest_on_to_claude() {
+        let line = CommandLine::try_parse_from(["janus", "run", "work", "--resume", "-p", "hi"]).unwrap();
+        assert!(matches!(line.command, Some(Top::Run { new_token: false, name: Some(n), claude_args }) if n == "work" && claude_args == ["--resume", "-p", "hi"]));
+        let line = CommandLine::try_parse_from(["janus", "run", "--new-token", "work"]).unwrap();
+        assert!(matches!(line.command, Some(Top::Run { new_token: true, claude_args, .. }) if claude_args.is_empty()));
     }
 
     #[test]

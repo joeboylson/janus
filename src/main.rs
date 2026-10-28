@@ -8,6 +8,7 @@ mod ask;
 mod auto;
 mod claude;
 mod live;
+mod run;
 mod setup;
 mod status;
 mod store;
@@ -105,6 +106,7 @@ fn run(line: CommandLine) -> Result<i32> {
             [name] => cmd_use(&ask, Some(name.clone())),
             _ => bail!("Unknown command `{}`. `janus --help` lists them.", words.join(" ")),
         },
+        Top::Run { new_token, name, claude_args } => run::cmd_run(&ask, name, new_token, claude_args),
         Top::Resume => auto::cmd_resume(&ask),
         Top::Account { action, name, yes } => account::run(&ask, action, name, yes),
         Top::Auto { action, primary, secondary, weekly, five_hour, notify } => {

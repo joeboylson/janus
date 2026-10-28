@@ -57,6 +57,22 @@ pub fn save(name: &str, tokens: &Value, account: Option<&Value>) -> Result<()> {
     write_object(&path(name)?, &data, 0o600)
 }
 
+/// The account's long-lived login for `janus run`, from `claude setup-token`,
+/// and when it was saved. Kept apart from "claudeAiOauth": it never renews,
+/// so sessions that use it can't wear out the login janus switches in.
+pub fn long_token(name: &str) -> Result<Option<(String, u64)>> {
+    let data = load(name)?;
+    let Some(saved) = data.get("longToken") else { return Ok(None) };
+    let token = saved.get("token").and_then(Value::as_str).filter(|t| !t.is_empty());
+    Ok(token.map(|t| (t.to_string(), saved.get("savedAt").and_then(Value::as_u64).unwrap_or(0))))
+}
+
+pub fn save_long_token(name: &str, token: &str) -> Result<()> {
+    let mut data = load(name)?;
+    data.insert("longToken".into(), serde_json::json!({ "token": token, "savedAt": now() }));
+    write_object(&path(name)?, &data, 0o600)
+}
+
 pub fn remove(name: &str) -> Result<()> {
     fs::remove_file(path(name)?)?;
     if current().as_deref() == Some(name) {
@@ -100,6 +116,6 @@ pub fn lock() -> Result<fs::File> {
     Ok(file)
 }
 
-fn now() -> u64 {
+pub fn now() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
